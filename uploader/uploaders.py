@@ -88,23 +88,63 @@ def get_gofile_account(api_key: str) -> dict:
     return data["data"]
 
 
-def get_gofile_server() -> str:
-    response = requests.get(f"{GOFILE_API_BASE}/servers", timeout=30)
+def create_gofile_public_folder(api_key: str, parent_folder_id: str, folder_name: str) -> dict:
+    response = requests.post(
+        f"{GOFILE_API_BASE}/contents/createFolder",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "parentFolderId": parent_folder_id,
+            "folderName": folder_name,
+            "public": True,
+        },
+        timeout=30,
+    )
     response.raise_for_status()
     data = response.json()
-    if data.get("status") != "ok" or not data["data"].get("servers"):
-        raise RuntimeError(f"GoFile server lookup failed: {data}")
-    return data["data"]["servers"][0]["name"]
+    if data.get("status") != "ok":
+        raise RuntimeError(f"GoFile folder creation failed: {data}")
+    return data["data"]
+
+
+def get_gofile_content(api_key: str, content_id: str) -> dict:
+    response = requests.get(
+        f"{GOFILE_API_BASE}/contents/{content_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("status") != "ok":
+        raise RuntimeError(f"GoFile content lookup failed: {data}")
+    return data["data"]
+
+
+def get_gofile_folder_url(api_key: str, folder_data: dict) -> str:
+    if download_page := folder_data.get("downloadPage") or folder_data.get("link"):
+        return download_page
+    if code := folder_data.get("code"):
+        return f"https://gofile.io/d/{code}"
+
+    folder_id = folder_data.get("id")
+    if not folder_id:
+        raise RuntimeError("GoFile folder creation succeeded but did not return a folder URL or ID.")
+
+    content = get_gofile_content(api_key, folder_id)
+    if download_page := content.get("downloadPage") or content.get("link"):
+        return download_page
+    if code := content.get("code"):
+        return f"https://gofile.io/d/{code}"
+    raise RuntimeError("GoFile folder lookup succeeded but did not return a public URL.")
 
 
 def upload_gofile(file_path: Path, api_key: str, callback: ProgressCallback) -> UploadResult:
     account = get_gofile_account(api_key)
-    server = get_gofile_server()
+    folder = create_gofile_public_folder(api_key, account["rootFolder"], file_path.name)
+    folder_url = get_gofile_folder_url(api_key, folder)
     with file_path.open("rb") as fh:
         encoder = MultipartEncoder(
             fields={
-                "token": api_key,
-                "folderId": account["rootFolder"],
+                "folderId": folder["id"],
                 "file": (file_path.name, fh, "application/octet-stream"),
             }
         )
@@ -113,9 +153,12 @@ def upload_gofile(file_path: Path, api_key: str, callback: ProgressCallback) -> 
             lambda current: callback(current.bytes_read, current.len),
         )
         response = requests.post(
-            f"https://{server}.gofile.io/uploadfile",
+            "https://upload.gofile.io/uploadfile",
             data=monitor,
-            headers={"Content-Type": monitor.content_type},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": monitor.content_type,
+            },
             timeout=300,
         )
     response.raise_for_status()
@@ -125,6 +168,6 @@ def upload_gofile(file_path: Path, api_key: str, callback: ProgressCallback) -> 
     return UploadResult(
         service="GoFile",
         success=True,
-        url=data["data"]["downloadPage"],
+        url=folder_url,
         payload=data,
     )
