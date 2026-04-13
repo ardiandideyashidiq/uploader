@@ -168,7 +168,6 @@ def main() -> int:
                 config.telegram_chat_id or "",
                 format_telegram_message(file_name, results),
             )
-            console.print("[green]Telegram notification sent.[/green]")
         except Exception as error:
             console.print(f"[red]Telegram notification failed:[/red] {error}")
             exit_code = 1
