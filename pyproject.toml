@@ -5,6 +5,7 @@ description = "Upload files to Pixeldrain and GoFile in parallel with live progr
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "InquirerPy>=0.3.4",
   "python-dotenv>=1.0.1",
   "requests>=2.32.0",
   "requests-toolbelt>=1.0.0",
