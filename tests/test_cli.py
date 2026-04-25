@@ -3,12 +3,13 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from uploader.cli import main
-from uploader.uploaders import UploadResult
+from uploader.uploaders import UploadCancelledError, UploadResult
 
 
 class FakeProgress:
@@ -172,7 +173,19 @@ class CliSingleUploadTests(unittest.TestCase):
         mock_send_telegram.assert_not_called()
 
 
-class CliInterruptTests(unittest.TestCase):
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        threading.Event().wait(0.0001)
+
+
+class CliStallTimeoutTests(unittest.TestCase):
     def _make_file(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         temp_dir = tempfile.TemporaryDirectory()
         file_path = Path(temp_dir.name) / "example.txt"
@@ -180,22 +193,30 @@ class CliInterruptTests(unittest.TestCase):
         return temp_dir, file_path
 
     @patch("uploader.cli.send_telegram_message")
-    @patch("uploader.cli.retry_upload")
     @patch("uploader.cli.create_progress")
     @patch("uploader.cli.AppConfig.from_sources")
-    @patch("uploader.cli.ThreadPoolExecutor")
-    @patch("uploader.cli.as_completed", return_value=[])
-    def test_keyboard_interrupt_during_executor_shutdown_exits_cleanly(
+    @patch("uploader.cli.upload_gofile")
+    @patch("uploader.cli.upload_pixeldrain")
+    @patch("uploader.cli.retry_upload")
+    @patch("uploader.cli.time.sleep")
+    @patch("uploader.cli.time.monotonic")
+    def test_pixeldrain_timeout_keeps_gofile_result(
         self,
-        mock_as_completed,
-        mock_executor_cls,
+        mock_monotonic,
+        mock_sleep,
+        mock_retry_upload,
+        mock_upload_pixeldrain,
+        mock_upload_gofile,
         mock_config,
         mock_create_progress,
-        mock_retry_upload,
         mock_send_telegram,
     ) -> None:
         temp_dir, file_path = self._make_file()
         self.addCleanup(temp_dir.cleanup)
+
+        clock = FakeClock()
+        mock_monotonic.side_effect = clock.monotonic
+        mock_sleep.side_effect = clock.sleep
 
         mock_config.return_value = SimpleNamespace(
             pixeldrain_key="pixeldrain-key",
@@ -204,28 +225,41 @@ class CliInterruptTests(unittest.TestCase):
             telegram_chat_id="chat-id",
         )
         mock_create_progress.return_value = FakeProgress()
+
+        def fake_pixeldrain(file_path, api_key, callback, cancelled=None):
+            callback(1, 10)
+            while not (cancelled and cancelled()):
+                threading.Event().wait(0.001)
+            raise UploadCancelledError("Upload cancelled after 30 seconds without progress.")
+
+        def fake_gofile(file_path, api_key, callback, cancelled=None):
+            callback(10, 10)
+            return UploadResult(
+                service="GoFile",
+                success=True,
+                url="https://gofile.io/d/xyz789",
+                payload={},
+            )
+
+        mock_upload_pixeldrain.side_effect = fake_pixeldrain
+        mock_upload_gofile.side_effect = fake_gofile
         mock_retry_upload.side_effect = lambda fn, **kwargs: fn()
 
-        class FakeExecutor:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                raise KeyboardInterrupt
-
-            def submit(self, *args, **kwargs):
-                return object()
-
-        mock_executor_cls.return_value = FakeExecutor()
-
         with (
-            patch("sys.argv", ["uploader", str(file_path), "--no-telegram"]),
+            patch("sys.argv", ["uploader", str(file_path)]),
             patch("uploader.cli.console.print"),
         ):
             exit_code = main()
 
-        self.assertEqual(exit_code, 130)
-        mock_send_telegram.assert_not_called()
+        self.assertEqual(exit_code, 1)
+        mock_upload_pixeldrain.assert_called_once()
+        mock_upload_gofile.assert_called_once()
+        mock_send_telegram.assert_called_once()
+
+        message = mock_send_telegram.call_args.args[2]
+        self.assertIn("GoFile:", message)
+        self.assertIn("https://gofile.io/d/xyz789", message)
+        self.assertIn("<b>Pixeldrain:</b> failed", message)
 
 
 if __name__ == "__main__":

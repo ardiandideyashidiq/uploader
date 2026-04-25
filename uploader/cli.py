@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from pathlib import Path
 
 from InquirerPy import inquirer
@@ -15,10 +15,17 @@ from uploader.config import AppConfig
 from uploader.notifier import format_telegram_message, send_telegram_message
 from uploader.progress import create_progress
 from uploader.retry import retry_upload
-from uploader.uploaders import UploadResult, upload_gofile, upload_pixeldrain
+from uploader.uploaders import (
+    UploadCancelledError,
+    UploadResult,
+    upload_gofile,
+    upload_pixeldrain,
+)
 
 
 console = Console()
+STALL_TIMEOUT_SECONDS = 30
+POLL_INTERVAL_SECONDS = 1
 
 
 def format_speed(bytes_per_second: float) -> str:
@@ -53,6 +60,13 @@ def parse_args() -> argparse.Namespace:
 
 def build_failure_result(service: str, error: Exception) -> UploadResult:
     return UploadResult(service=service, success=False, error=str(error))
+
+
+def build_cancelled_result(service: str) -> UploadResult:
+    return build_failure_result(
+        service,
+        UploadCancelledError("Upload cancelled after 30 seconds without progress."),
+    )
 
 
 def select_single_service() -> str:
@@ -104,6 +118,13 @@ def main() -> int:
 
         progress = create_progress()
         results_by_service: dict[str, UploadResult] = {}
+        result_lock = threading.Lock()
+        finished_events: dict[str, threading.Event] = {
+            service: threading.Event() for service in services
+        }
+        cancel_events: dict[str, threading.Event] = {
+            service: threading.Event() for service in services
+        }
         file_name = file_path.name
         file_size = file_path.stat().st_size
 
@@ -119,7 +140,18 @@ def main() -> int:
                     speed="-",
                     total=file_size,
                 )
-                speed_state[service] = {"started_at": None, "last_speed": "-"}
+                speed_state[service] = {
+                    "started_at": time.monotonic(),
+                    "last_progress_at": time.monotonic(),
+                    "last_speed": "-",
+                }
+
+            def store_result(service: str, result: UploadResult) -> bool:
+                with result_lock:
+                    if service in results_by_service:
+                        return False
+                    results_by_service[service] = result
+                    return True
 
             def make_callback(service: str):
                 task_id = task_map[service]
@@ -127,8 +159,7 @@ def main() -> int:
                 def callback(completed: int, total: int) -> None:
                     now = time.monotonic()
                     state = speed_state[service]
-                    if state["started_at"] is None and completed > 0:
-                        state["started_at"] = now
+                    state["last_progress_at"] = now
                     elapsed = (
                         0.0
                         if state["started_at"] is None
@@ -146,41 +177,74 @@ def main() -> int:
 
                 return callback
 
-            with ThreadPoolExecutor(max_workers=len(services)) as executor:
-                uploaders = {
-                    "Pixeldrain": upload_pixeldrain,
-                    "GoFile": upload_gofile,
-                }
-                future_map = {
-                    executor.submit(
-                        retry_upload,
-                        lambda service=service: uploaders[service](
-                            file_path,
-                            getattr(config, f"{service.lower()}_key"),
-                            make_callback(service),
-                        ),
-                    ): service
-                    for service in services
-                }
-                for future in as_completed(future_map):
-                    service = future_map[future]
-                    task_id = task_map[service]
+            uploaders = {
+                "Pixeldrain": upload_pixeldrain,
+                "GoFile": upload_gofile,
+            }
+
+            def make_worker(service: str):
+                def worker() -> None:
                     try:
-                        result = future.result()
-                        results_by_service[service] = result
+                        result = retry_upload(
+                            lambda service=service: uploaders[service](
+                                file_path,
+                                getattr(config, f"{service.lower()}_key"),
+                                make_callback(service),
+                                cancelled=cancel_events[service].is_set,
+                            )
+                        )
+                    except Exception as error:
+                        result = build_failure_result(service, error)
+
+                    if store_result(service, result):
+                        finished_events[service].set()
+
+                return worker
+
+            for service in services:
+                thread = threading.Thread(
+                    target=make_worker(service),
+                    name=f"upload-{service.lower()}",
+                    daemon=True,
+                )
+                thread.start()
+
+            active_services = set(services)
+            while active_services:
+                now = time.monotonic()
+                for service in list(active_services):
+                    task_id = task_map[service]
+                    with result_lock:
+                        already_finished = service in results_by_service
+
+                    if (
+                        service == "Pixeldrain"
+                        and not already_finished
+                        and now - speed_state[service]["last_progress_at"] > STALL_TIMEOUT_SECONDS
+                    ):
+                        cancel_events[service].set()
+                        if store_result(service, build_cancelled_result(service)):
+                            progress.update(task_id, state="failed", speed="-")
+                            progress.stop_task(task_id)
+                        active_services.remove(service)
+                        continue
+
+                    if finished_events[service].is_set():
+                        with result_lock:
+                            result = results_by_service[service]
                         progress.update(
                             task_id,
                             completed=progress.tasks[task_id].total or file_size,
-                            state="done",
+                            state="done" if result.success else "failed",
                             speed=speed_state[service]["last_speed"],
                             refresh=True,
                         )
-                    except Exception as error:
-                        results_by_service[service] = build_failure_result(
-                            service, error
-                        )
-                        progress.update(task_id, state="failed", speed="-")
-                        progress.stop_task(task_id)
+                        if not result.success:
+                            progress.stop_task(task_id)
+                        active_services.remove(service)
+
+                if active_services:
+                    time.sleep(POLL_INTERVAL_SECONDS)
 
         results = [results_by_service[service] for service in services]
 

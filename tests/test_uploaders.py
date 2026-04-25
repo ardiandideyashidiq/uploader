@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from uploader.uploaders import upload_gofile
+from uploader.uploaders import UploadCancelledError, upload_gofile, upload_pixeldrain
 
 
 class FakeResponse:
@@ -134,6 +134,18 @@ class UploadGoFileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "GoFile upload failed"):
             upload_gofile(file_path, "api-key", lambda *_: None)
+
+    @patch("uploader.uploaders.requests.put")
+    def test_upload_pixeldrain_raises_when_cancelled_before_start(self, mock_put) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with self.assertRaisesRegex(
+            UploadCancelledError, "Upload cancelled after 30 seconds without progress"
+        ):
+            upload_pixeldrain(file_path, "api-key", lambda *_: None, cancelled=lambda: True)
+
+        mock_put.assert_not_called()
 
 
 if __name__ == "__main__":
