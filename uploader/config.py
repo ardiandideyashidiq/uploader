@@ -9,6 +9,7 @@ from dotenv import dotenv_values
 
 DEFAULT_PIXELDRAIN_KEY = "f159c602-0c9f-4c09-8b82-544d6acdb568"
 DEFAULT_GOFILE_KEY = "ZCXFB6pBWMEWaCNEARTKCu8j7clo8GNQ"
+DEFAULT_VIKINGFILE_USER = "f3gmgZDa8z"
 DEFAULT_TELEGRAM_BOT_TOKEN = "8745418982:AAFuxsUvacKh0eC1gtdPBoH6Ebsrf4TMle0"
 DEFAULT_TELEGRAM_CHAT_ID = "6665891737"
 
@@ -42,6 +43,7 @@ def _pick_value(cli_value: str | None, dotenv_values_map: dict[str, str], *keys:
 class AppConfig:
     pixeldrain_key: str
     gofile_key: str
+    vikingfile_user: str
     telegram_bot_token: str | None
     telegram_chat_id: str | None
 
@@ -51,6 +53,7 @@ class AppConfig:
         *,
         pixeldrain_key: str | None,
         gofile_key: str | None,
+        vikingfile_user: str | None = None,
         telegram_bot_token: str | None,
         telegram_chat_id: str | None,
     ) -> "AppConfig":
@@ -70,6 +73,14 @@ class AppConfig:
                 "gofile",
                 default=DEFAULT_GOFILE_KEY,
             ),
+            vikingfile_user=_pick_value(
+                vikingfile_user,
+                dotenv_values_map,
+                "VIKINGFILE_USER",
+                "vikingfile_user",
+                default=DEFAULT_VIKINGFILE_USER,
+            )
+            or "",
             telegram_bot_token=_pick_value(
                 telegram_bot_token,
                 dotenv_values_map,

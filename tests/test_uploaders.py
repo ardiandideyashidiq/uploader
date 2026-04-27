@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from uploader.uploaders import UploadCancelledError, upload_gofile, upload_pixeldrain
+from uploader.uploaders import (
+    UploadCancelledError,
+    upload_gofile,
+    upload_pixeldrain,
+    upload_vikingfile,
+)
 
 
 class FakeResponse:
@@ -146,6 +151,81 @@ class UploadGoFileTests(unittest.TestCase):
             upload_pixeldrain(file_path, "api-key", lambda *_: None, cancelled=lambda: True)
 
         mock_put.assert_not_called()
+
+
+class UploadVikingfileTests(unittest.TestCase):
+    def _make_file(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        temp_dir = tempfile.TemporaryDirectory()
+        file_path = Path(temp_dir.name) / "example.txt"
+        file_path.write_bytes(b"hello world")
+        return temp_dir, file_path
+
+    @patch("uploader.uploaders.requests.post")
+    @patch("uploader.uploaders.requests.get")
+    def test_upload_vikingfile_uploads_file_and_returns_url(self, mock_get, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_get.return_value = FakeResponse({"server": "https://upload.vikingfile.com"})
+        mock_post.return_value = FakeResponse(
+            {
+                "name": "example.txt",
+                "size": 11,
+                "hash": "TPRSfLvcIu",
+                "url": "https://vikingfile.com/f/TPRSfLvcIu",
+            }
+        )
+
+        result = upload_vikingfile(file_path, "user-hash", lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.url, "https://vikingfile.com/f/TPRSfLvcIu")
+        self.assertIsNotNone(result.payload)
+        self.assertEqual(mock_get.call_args.args[0], "https://vikingfile.com/api/get-server")
+
+        upload_call = mock_post.call_args
+        self.assertEqual(upload_call.args[0], "https://upload.vikingfile.com")
+        self.assertEqual(upload_call.kwargs["data"].encoder.fields["user"], "user-hash")
+        self.assertIn("file", upload_call.kwargs["data"].encoder.fields)
+
+    @patch("uploader.uploaders.requests.post")
+    @patch("uploader.uploaders.requests.get")
+    def test_upload_vikingfile_raises_when_server_lookup_fails(self, mock_get, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_get.return_value = FakeResponse({})
+
+        with self.assertRaisesRegex(RuntimeError, "Vikingfile server lookup failed"):
+            upload_vikingfile(file_path, "", lambda *_: None)
+
+        mock_post.assert_not_called()
+
+    @patch("uploader.uploaders.requests.post")
+    @patch("uploader.uploaders.requests.get")
+    def test_upload_vikingfile_raises_when_upload_response_has_no_url(self, mock_get, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_get.return_value = FakeResponse({"server": "https://upload.vikingfile.com"})
+        mock_post.return_value = FakeResponse({"hash": "TPRSfLvcIu"})
+
+        with self.assertRaisesRegex(RuntimeError, "Vikingfile upload failed"):
+            upload_vikingfile(file_path, "", lambda *_: None)
+
+    @patch("uploader.uploaders.requests.get")
+    @patch("uploader.uploaders.requests.post")
+    def test_upload_vikingfile_raises_when_cancelled_before_start(self, mock_post, mock_get) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with self.assertRaisesRegex(
+            UploadCancelledError, "Upload cancelled after 30 seconds without progress"
+        ):
+            upload_vikingfile(file_path, "", lambda *_: None, cancelled=lambda: True)
+
+        mock_get.assert_not_called()
+        mock_post.assert_not_called()
 
 
 if __name__ == "__main__":

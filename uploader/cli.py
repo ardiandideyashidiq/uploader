@@ -20,6 +20,7 @@ from uploader.uploaders import (
     UploadResult,
     upload_gofile,
     upload_pixeldrain,
+    upload_vikingfile,
 )
 
 
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("file", help="Path to the file to upload.")
     parser.add_argument("--pixeldrain-key")
     parser.add_argument("--gofile-key")
+    parser.add_argument("--vikingfile-user")
     parser.add_argument("--telegram-bot-token")
     parser.add_argument("--telegram-chat-id")
     parser.add_argument(
@@ -75,9 +77,9 @@ def select_single_service() -> str:
 
     choice = inquirer.select(
         message="Select upload destination:",
-        choices=["Pixeldrain", "GoFile"],
+        choices=["Pixeldrain", "GoFile", "Vikingfile"],
     ).execute()
-    if choice not in {"Pixeldrain", "GoFile"}:
+    if choice not in {"Pixeldrain", "GoFile", "Vikingfile"}:
         raise RuntimeError("Invalid single upload selection.")
     return choice
 
@@ -93,6 +95,7 @@ def main() -> int:
         config = AppConfig.from_sources(
             pixeldrain_key=args.pixeldrain_key,
             gofile_key=args.gofile_key,
+            vikingfile_user=args.vikingfile_user,
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
         )
@@ -108,7 +111,7 @@ def main() -> int:
             )
             return 2
 
-        services = ["Pixeldrain", "GoFile"]
+        services = ["Pixeldrain", "GoFile", "Vikingfile"]
         if args.single:
             try:
                 services = [select_single_service()]
@@ -180,6 +183,12 @@ def main() -> int:
             uploaders = {
                 "Pixeldrain": upload_pixeldrain,
                 "GoFile": upload_gofile,
+                "Vikingfile": upload_vikingfile,
+            }
+            uploader_credentials = {
+                "Pixeldrain": config.pixeldrain_key,
+                "GoFile": config.gofile_key,
+                "Vikingfile": config.vikingfile_user,
             }
 
             def make_worker(service: str):
@@ -188,7 +197,7 @@ def main() -> int:
                         result = retry_upload(
                             lambda service=service: uploaders[service](
                                 file_path,
-                                getattr(config, f"{service.lower()}_key"),
+                                uploader_credentials[service],
                                 make_callback(service),
                                 cancelled=cancel_events[service].is_set,
                             )

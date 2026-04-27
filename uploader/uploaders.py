@@ -11,6 +11,7 @@ from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 
 PIXELDRAIN_API_BASE = "https://pixeldrain.com/api"
 GOFILE_API_BASE = "https://api.gofile.io"
+VIKINGFILE_API_BASE = "https://vikingfile.com/api"
 CHUNK_SIZE = 1024 * 256
 
 
@@ -207,5 +208,62 @@ def upload_gofile(
         service="GoFile",
         success=True,
         url=folder_url,
+        payload=data,
+    )
+
+
+def get_vikingfile_server() -> str:
+    response = requests.get(f"{VIKINGFILE_API_BASE}/get-server", timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    server = data.get("server")
+    if not server:
+        raise RuntimeError(f"Vikingfile server lookup failed: {data}")
+    return server
+
+
+def upload_vikingfile(
+    file_path: Path,
+    user_hash: str,
+    callback: ProgressCallback,
+    cancelled: Callable[[], bool] | None = None,
+) -> UploadResult:
+    is_cancelled = cancelled or (lambda: False)
+    if is_cancelled():
+        raise UploadCancelledError("Upload cancelled after 30 seconds without progress.")
+
+    server = get_vikingfile_server()
+    with file_path.open("rb") as fh:
+        encoder = MultipartEncoder(
+            fields={
+                "file": (file_path.name, fh, "application/octet-stream"),
+                "user": user_hash,
+            }
+        )
+
+        def guarded_callback(current) -> None:
+            if is_cancelled():
+                raise UploadCancelledError(
+                    "Upload cancelled after 30 seconds without progress."
+                )
+            callback(current.bytes_read, current.len)
+
+        monitor = MultipartEncoderMonitor(encoder, guarded_callback)
+        response = requests.post(
+            server,
+            data=monitor,
+            headers={"Content-Type": monitor.content_type},
+            timeout=300,
+        )
+
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("url"):
+        raise RuntimeError(f"Vikingfile upload failed: {data}")
+
+    return UploadResult(
+        service="Vikingfile",
+        success=True,
+        url=data["url"],
         payload=data,
     )
