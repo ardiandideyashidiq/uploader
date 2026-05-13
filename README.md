@@ -1,7 +1,7 @@
 # uploader
 
 ```bash
-uv tool install git+https://github.com/rdndds/uploader.git
+uv tool install git+https://github.com/ardiandideyashidiq/uploader.git
 ```
 
 ## Setup
