@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
+import mimetypes
 from pathlib import Path
 import re
 import shlex
@@ -327,6 +329,7 @@ class SourceForgeClient:
 
         size_bytes = local_path.stat().st_size
         sha256 = hash_file(local_path)
+        file_type, _ = mimetypes.guess_type(local_path.name)
         filename = validate_filename(local_path.name)
         normalized_dir = normalize_remote_dir(remote_dir)
         final_remote_path = f"{normalized_dir}/{filename}" if normalized_dir else filename
@@ -348,5 +351,11 @@ class SourceForgeClient:
                 "local_file": str(local_path),
                 "size_bytes": size_bytes,
                 "sha256": sha256,
+                "file_type": file_type,
+                "upload_date": datetime.now().isoformat(),
             },
+            file_hash=sha256,
+            file_size=size_bytes,
+            upload_date=datetime.now().isoformat(),
+            file_type=file_type,
         )

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from uploader.uploaders import (
     UploadCancelledError,
+    upload_direct,
     upload_gofile,
     upload_pixeldrain,
     upload_vikingfile,
@@ -14,14 +15,19 @@ from uploader.uploaders import (
 
 
 class FakeResponse:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, text: str | None = None) -> None:
         self._payload = payload
+        self._text = text or ""
 
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict:
         return self._payload
+
+    @property
+    def text(self) -> str:
+        return self._text
 
 
 class UploadGoFileTests(unittest.TestCase):
@@ -226,6 +232,75 @@ class UploadVikingfileTests(unittest.TestCase):
 
         mock_get.assert_not_called()
         mock_post.assert_not_called()
+
+
+class UploadDirectTests(unittest.TestCase):
+    def _make_file(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        temp_dir = tempfile.TemporaryDirectory()
+        file_path = Path(temp_dir.name) / "example.txt"
+        file_path.write_bytes(b"hello world")
+        return temp_dir, file_path
+
+    @patch("uploader.uploaders.requests.post")
+    def test_upload_direct_prefers_sendit_and_returns_url(self, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_post.return_value = FakeResponse({}, text="wget https://sendit.sh/abc123/example.txt")
+
+        result = upload_direct(file_path, lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.url, "https://sendit.sh/abc123/example.txt")
+        self.assertEqual(result.service, "Direct")
+
+        upload_call = mock_post.call_args
+        self.assertEqual(upload_call.args[0], "https://sendit.sh")
+        self.assertIn("file", upload_call.kwargs["data"].encoder.fields)
+
+    @patch("uploader.uploaders.requests.post")
+    def test_upload_direct_falls_back_to_temp_sh(self, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_post.side_effect = [
+            FakeResponse({}, text="invalid response"),
+            FakeResponse({}, text="https://temp.sh/abc123/example.txt"),
+        ]
+
+        result = upload_direct(file_path, lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.url, "https://temp.sh/abc123/example.txt")
+        self.assertEqual(result.service, "Direct")
+        self.assertEqual(len(mock_post.call_args_list), 2)
+        self.assertEqual(mock_post.call_args_list[0].args[0], "https://sendit.sh")
+        self.assertEqual(mock_post.call_args_list[1].args[0], "https://temp.sh/upload")
+
+    @patch("uploader.uploaders.requests.post")
+    def test_upload_direct_raises_when_cancelled_before_start(self, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with self.assertRaisesRegex(
+            UploadCancelledError, "Upload cancelled after 30 seconds without progress"
+        ):
+            upload_direct(file_path, lambda *_: None, cancelled=lambda: True)
+
+        mock_post.assert_not_called()
+
+    @patch("uploader.uploaders.requests.post")
+    def test_upload_direct_raises_when_both_services_fail(self, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_post.side_effect = [
+            FakeResponse({}, text="invalid sendit response"),
+            FakeResponse({}, text="invalid temp response"),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "direct upload failed via sendit.sh"):
+            upload_direct(file_path, lambda *_: None)
 
 
 if __name__ == "__main__":

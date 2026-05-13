@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from html import escape
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo
 
 from rich.filesize import decimal
 
 from uploader.config import AppConfig
-from uploader.notifier import send_telegram_message
+from uploader.notifier import build_download_keyboard, send_telegram_message
 from uploader.sourceforge import (
     SourceForgeClient,
     SourceForgeConfig,
@@ -16,6 +18,9 @@ from uploader.sourceforge import (
     generate_download_url,
 )
 from uploader.sourceforge_profile import SourceForgeProfile, resolve_profile
+from uploader.uploaders import format_file_size
+
+WIB = ZoneInfo("Asia/Jakarta")
 
 
 def _add_common_options(parser: argparse.ArgumentParser) -> None:
@@ -100,14 +105,32 @@ def format_sourceforge_telegram_message(filename: str, result_url: str, payload:
     size_bytes = int(payload.get("size_bytes", 0))
     sha256 = str(payload.get("sha256", ""))
     remote_path = str(payload.get("remote_path", ""))
+    file_type = payload.get("file_type")
+    upload_date = payload.get("upload_date")
+
     lines = [
-        "<b>SourceForge upload complete</b>",
+        "<b>SourceForge Upload Complete</b>",
+        "",
         f"<b>File:</b> <code>{escape(filename)}</code>",
-        f"<b>Size:</b> {_format_size(size_bytes)} ({size_bytes} bytes)",
-        f"<b>SHA256:</b> <code>{escape(sha256)}</code>",
-        f"<b>Remote path:</b> <code>{escape(remote_path)}</code>",
-        f"<b>SourceForge:</b> {escape(result_url)}",
+        "<blockquote><b>SourceForge</b> ok</blockquote>",
+        "<blockquote expandable><b>File Details</b>",
     ]
+    if file_type:
+        lines.append(f"Type: <code>{escape(str(file_type))}</code>")
+    lines.append(f"Size: <code>{escape(format_file_size(size_bytes))} ({size_bytes} bytes)</code>")
+    lines.append(f"SHA256: <code>{escape(sha256)}</code>")
+    lines.append(f"Remote path: <code>{escape(remote_path)}</code>")
+    if upload_date:
+        try:
+            dt = datetime.fromisoformat(str(upload_date))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            dt_wib = dt.astimezone(WIB)
+            formatted = dt_wib.strftime("%Y-%m-%d %H:%M:%S WIB (UTC+7)")
+            lines.append(f"Uploaded: <code>{escape(formatted)}</code>")
+        except ValueError:
+            pass
+    lines.append("</blockquote>")
     return "\n".join(lines)
 
 
@@ -176,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
                         telegram_config.telegram_bot_token or "",
                         telegram_config.telegram_chat_id or "",
                         format_sourceforge_telegram_message(local_file.name, result.url or "", result.payload or {}),
+                        parse_mode="HTML",
+                        reply_markup=build_download_keyboard([result]),
                     )
                 except Exception as error:
                     print(f"Telegram notification failed: {error}")

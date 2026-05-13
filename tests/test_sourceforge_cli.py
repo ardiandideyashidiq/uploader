@@ -237,10 +237,14 @@ class SourceForgeCliTests(unittest.TestCase):
         mock_config.return_value.telegram_bot_token = "token"
         mock_config.return_value.telegram_chat_id = "chat-id"
         mock_client.return_value.upload_file.return_value.url = "https://sourceforge.net/projects/infinity-x/files/P661N/16/vanilla/ROM.zip/download"
+        mock_client.return_value.upload_file.return_value.service = "SourceForge"
+        mock_client.return_value.upload_file.return_value.success = True
         mock_client.return_value.upload_file.return_value.payload = {
             "remote_path": "P661N/16/vanilla/ROM.zip",
             "size_bytes": 11,
             "sha256": "b94d27b9934d3e08a52e52d7da7dabfadeb8f2d7da7dabfadeb8f2d7da7dabfa",
+            "file_type": "application/zip",
+            "upload_date": "2024-01-01T12:00:00",
         }
 
         with patch("sys.stdout", new=io.StringIO()):
@@ -255,13 +259,25 @@ class SourceForgeCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_send_telegram.assert_called_once()
         self.assertEqual(mock_send_telegram.call_args.args[:2], ("token", "chat-id"))
+        self.assertEqual(mock_send_telegram.call_args.kwargs["parse_mode"], "HTML")
         message = mock_send_telegram.call_args.args[2]
+        self.assertIn("<b>SourceForge Upload Complete</b>", message)
         self.assertIn("<b>File:</b> <code>ROM.zip</code>", message)
-        self.assertIn("<b>Size:</b> 11 B (11 bytes)", message)
-        self.assertIn("<b>SHA256:</b>", message)
-        self.assertIn("<code>b94d27b9934d3e08a52e52d7da7dabfadeb8f2d7da7dabfadeb8f2d7da7dabfa</code>", message)
-        self.assertIn("<b>Remote path:</b> <code>P661N/16/vanilla/ROM.zip</code>", message)
-        self.assertIn("sourceforge.net/projects/infinity-x", message)
+        self.assertIn("<blockquote><b>SourceForge</b> ok</blockquote>", message)
+        self.assertIn("<blockquote expandable><b>File Details</b>", message)
+        self.assertIn("Type: <code>application/zip</code>", message)
+        self.assertIn("Size: <code>11.00 B (11 bytes)</code>", message)
+        self.assertIn("SHA256: <code>b94d27b9934d3e08a52e52d7da7dabfadeb8f2d7da7dabfadeb8f2d7da7dabfa</code>", message)
+        self.assertIn("Remote path: <code>P661N/16/vanilla/ROM.zip</code>", message)
+        self.assertIn("Uploaded: <code>2024-01-01 19:00:00 WIB (UTC+7)</code>", message)
+        # Verify reply_markup contains inline keyboard with SourceForge button.
+        reply_markup = mock_send_telegram.call_args.kwargs.get("reply_markup")
+        self.assertIsNotNone(reply_markup)
+        import json
+        keyboard = json.loads(reply_markup)
+        self.assertIn("inline_keyboard", keyboard)
+        self.assertEqual(len(keyboard["inline_keyboard"]), 1)
+        self.assertEqual(keyboard["inline_keyboard"][0][0]["text"], "SourceForge")
 
     @patch("uploader.sourceforge_cli.AppConfig.from_sources")
     @patch("uploader.sourceforge_cli.SourceForgeClient")
