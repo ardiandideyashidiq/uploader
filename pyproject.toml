@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "InquirerPy>=0.3.4",
+  "pexpect>=4.9.0",
   "python-dotenv>=1.0.1",
   "requests>=2.32.0",
   "requests-toolbelt>=1.0.0",
@@ -14,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 uploader = "uploader.cli:main"
+up-sf = "uploader.sourceforge_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27.0"]

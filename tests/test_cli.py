@@ -186,6 +186,16 @@ class CliSingleUploadTests(unittest.TestCase):
         mock_upload_vikingfile.assert_not_called()
         mock_send_telegram.assert_not_called()
 
+    @patch("uploader.cli.sourceforge_main")
+    def test_sourceforge_subcommand_is_routed(self, mock_sourceforge_main) -> None:
+        mock_sourceforge_main.return_value = 7
+
+        with patch("sys.argv", ["uploader", "sourceforge", "link", "--username", "user"]):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 7)
+        mock_sourceforge_main.assert_called_once_with(["link", "--username", "user"])
+
 
 class FakeClock:
     def __init__(self) -> None:

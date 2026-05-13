@@ -15,6 +15,7 @@ from uploader.config import AppConfig
 from uploader.notifier import format_telegram_message, send_telegram_message
 from uploader.progress import create_progress
 from uploader.retry import retry_upload
+from uploader.sourceforge_cli import main as sourceforge_main
 from uploader.uploaders import (
     UploadCancelledError,
     UploadResult,
@@ -35,7 +36,7 @@ def format_speed(bytes_per_second: float) -> str:
     return f"{decimal(int(bytes_per_second))}/s"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Upload a file to Pixeldrain and GoFile in parallel.",
     )
@@ -57,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--json", action="store_true", help="Print final results as JSON."
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def build_failure_result(service: str, error: Exception) -> UploadResult:
@@ -84,9 +85,13 @@ def select_single_service() -> str:
     return choice
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     try:
-        args = parse_args()
+        args_list = sys.argv[1:] if argv is None else argv
+        if args_list and args_list[0] == "sourceforge":
+            return sourceforge_main(args_list[1:])
+
+        args = parse_args(args_list)
         file_path = Path(args.file).expanduser().resolve()
         if not file_path.exists() or not file_path.is_file():
             console.print(f"[red]File not found:[/red] {file_path}")
