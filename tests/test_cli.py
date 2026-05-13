@@ -322,7 +322,8 @@ class CliStallTimeoutTests(unittest.TestCase):
         self.assertIn("<blockquote><b>Services</b>", message)
         self.assertIn("<b>GoFile:</b> ok", message)
         self.assertIn("<b>Vikingfile:</b> ok", message)
-        self.assertIn("<tg-spoiler>failed</tg-spoiler>", message)
+        # Failed Pixeldrain is not shown in Telegram notification.
+        self.assertNotIn("<tg-spoiler>", message)
 
     @patch("uploader.cli.send_telegram_message")
     @patch("uploader.cli.upload_vikingfile")
@@ -477,8 +478,9 @@ class NotificationFormatTests(unittest.TestCase):
 
         self.assertIn("<b>Upload Complete</b>", message)
         self.assertIn("<b>File:</b> <code>test.txt</code>", message)
-        self.assertIn("<tg-spoiler>failed</tg-spoiler>", message)
-        self.assertIn("<i>Connection timeout</i>", message)
+        # Failed services are not shown in Telegram notification.
+        self.assertNotIn("Pixeldrain", message)
+        self.assertNotIn("failed", message)
 
     def test_format_telegram_message_escapes_html_characters(self) -> None:
         results = [

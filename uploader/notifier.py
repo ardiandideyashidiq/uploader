@@ -59,17 +59,13 @@ def format_telegram_message(filename: str, results: list[UploadResult]) -> str:
     lines.append(f"<b>File:</b> <code>{escape(filename)}</code>")
 
     # Service status in a blockquote (links are buttons below the message).
-    lines.append("<blockquote><b>Services</b>")
-    for result in results:
-        if result.success and result.url:
+    # Only show successful uploads; failures are visible in the CLI output.
+    successful = [r for r in results if r.success and r.url]
+    if successful:
+        lines.append("<blockquote><b>Services</b>")
+        for result in successful:
             lines.append(f"• <b>{escape(result.service)}:</b> ok")
-        else:
-            lines.append(
-                f"• <b>{escape(result.service)}:</b> <tg-spoiler>failed</tg-spoiler>"
-            )
-            if result.error:
-                lines.append(f"  <i>{escape(result.error)}</i>")
-    lines.append("</blockquote>")
+        lines.append("</blockquote>")
 
     # File details in an expandable blockquote (accordion).
     lines.append("<blockquote expandable><b>File Details</b>")
