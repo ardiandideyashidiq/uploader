@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from uploader.cli import check_config, main
+from uploader.cli import build_default_services, build_single_service_choices, main
 from uploader.notifier import build_download_keyboard, format_telegram_message
 from uploader.uploaders import UploadCancelledError, UploadResult
 
@@ -49,6 +49,133 @@ class CliSingleUploadTests(unittest.TestCase):
         file_path = Path(temp_dir.name) / "example.txt"
         file_path.write_bytes(b"hello world")
         return temp_dir, file_path
+
+    @patch("uploader.cli.send_telegram_message")
+    @patch("uploader.cli.upload_vikingfile")
+    @patch("uploader.cli.upload_gofile")
+    @patch("uploader.cli.upload_pixeldrain")
+    @patch("uploader.cli.retry_upload")
+    @patch("uploader.cli.create_progress")
+    @patch("uploader.cli.AppConfig.from_sources")
+    @patch("uploader.cli.get_config_path")
+    @patch("uploader.cli.console.print")
+    def test_default_mode_uses_anonymous_uploads_without_setup_or_telegram(
+        self,
+        mock_console_print,
+        mock_get_config,
+        mock_config,
+        mock_create_progress,
+        mock_retry_upload,
+        mock_upload_pixeldrain,
+        mock_upload_gofile,
+        mock_upload_vikingfile,
+        mock_send_telegram,
+    ) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_get_config.return_value = Path("/fake/config")
+        mock_config.return_value = SimpleNamespace(
+            pixeldrain_key="",
+            gofile_key="",
+            vikingfile_user="",
+            telegram_bot_token=None,
+            telegram_chat_id=None,
+        )
+        mock_create_progress.return_value = FakeProgress()
+        mock_upload_gofile.return_value = UploadResult(
+            service="GoFile",
+            success=True,
+            url="https://gofile.io/d/anon123",
+            payload={},
+        )
+        mock_upload_vikingfile.return_value = UploadResult(
+            service="Vikingfile",
+            success=True,
+            url="https://vikingfile.com/f/anon123",
+            payload={},
+        )
+        mock_retry_upload.side_effect = lambda fn, **kwargs: fn()
+
+        with (
+            patch("sys.argv", ["uploader", str(file_path)]),
+            patch("sys.stdin", io.StringIO()) as mock_stdin,
+        ):
+            mock_stdin.isatty = lambda: False
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        mock_upload_pixeldrain.assert_not_called()
+        mock_upload_gofile.assert_called_once()
+        mock_upload_vikingfile.assert_called_once()
+        self.assertIsNone(mock_upload_gofile.call_args.args[1])
+        self.assertEqual(mock_upload_vikingfile.call_args.args[1], "")
+        mock_send_telegram.assert_not_called()
+        mock_console_print.assert_any_call(
+            "\n[bold]File:[/bold] " + file_path.name
+        )
+
+    @patch("uploader.cli.send_telegram_message")
+    @patch("uploader.cli.upload_vikingfile")
+    @patch("uploader.cli.upload_gofile")
+    @patch("uploader.cli.upload_pixeldrain")
+    @patch("uploader.cli.retry_upload")
+    @patch("uploader.cli.create_progress")
+    @patch("uploader.cli.AppConfig.from_sources")
+    @patch("uploader.cli.get_config_path")
+    @patch("uploader.cli.inquirer.select")
+    def test_single_mode_only_shows_available_services_when_no_keys_exist(
+        self,
+        mock_select,
+        mock_get_config,
+        mock_config,
+        mock_create_progress,
+        mock_retry_upload,
+        mock_upload_pixeldrain,
+        mock_upload_gofile,
+        mock_upload_vikingfile,
+        mock_send_telegram,
+    ) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_get_config.return_value = Path("/fake/config")
+        mock_config.return_value = SimpleNamespace(
+            pixeldrain_key="",
+            gofile_key="",
+            vikingfile_user="",
+            telegram_bot_token=None,
+            telegram_chat_id=None,
+        )
+        mock_create_progress.return_value = FakeProgress()
+        mock_select.return_value.execute.return_value = "GoFile"
+        mock_upload_gofile.return_value = UploadResult(
+            service="GoFile",
+            success=True,
+            url="https://gofile.io/d/anon123",
+            payload={},
+        )
+        mock_retry_upload.side_effect = lambda fn, **kwargs: fn()
+
+        with (
+            patch(
+                "sys.argv", ["uploader", str(file_path), "--no-telegram", "--single"]
+            ),
+            patch("sys.stdin", io.StringIO()) as mock_stdin,
+        ):
+            mock_stdin.isatty = lambda: True
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        mock_select.assert_called_once()
+        self.assertEqual(
+            mock_select.call_args.kwargs["choices"],
+            ["GoFile", "Vikingfile", "Direct"],
+        )
+        mock_upload_pixeldrain.assert_not_called()
+        mock_upload_gofile.assert_called_once()
+        mock_upload_vikingfile.assert_not_called()
+        mock_send_telegram.assert_not_called()
 
     @patch("uploader.cli.send_telegram_message")
     @patch("uploader.cli.upload_vikingfile")
@@ -385,8 +512,8 @@ class CliStallTimeoutTests(unittest.TestCase):
         mock_send_telegram.assert_not_called()
 
 
-class CheckConfigTests(unittest.TestCase):
-    def test_check_config_returns_missing_keys(self) -> None:
+class ServiceSelectionTests(unittest.TestCase):
+    def test_build_default_services_uses_anonymous_hosts_first(self) -> None:
         from uploader.config import AppConfig
 
         config = AppConfig(
@@ -396,21 +523,37 @@ class CheckConfigTests(unittest.TestCase):
             telegram_bot_token=None,
             telegram_chat_id=None,
         )
-        missing = check_config(config)
-        self.assertEqual(missing, ["pixeldrain_key", "gofile_key", "vikingfile_user"])
+        self.assertEqual(build_default_services(config), ["GoFile", "Vikingfile"])
 
-    def test_check_config_returns_empty_when_all_present(self) -> None:
+    def test_build_default_services_includes_pixeldrain_when_configured(self) -> None:
         from uploader.config import AppConfig
 
         config = AppConfig(
             pixeldrain_key="key",
-            gofile_key="key",
-            vikingfile_user="user",
-            telegram_bot_token="token",
-            telegram_chat_id="chat",
+            gofile_key="",
+            vikingfile_user="",
+            telegram_bot_token=None,
+            telegram_chat_id=None,
         )
-        missing = check_config(config)
-        self.assertEqual(missing, [])
+        self.assertEqual(
+            build_default_services(config),
+            ["GoFile", "Vikingfile", "Pixeldrain"],
+        )
+
+    def test_build_single_service_choices_appends_direct(self) -> None:
+        from uploader.config import AppConfig
+
+        config = AppConfig(
+            pixeldrain_key="key",
+            gofile_key="",
+            vikingfile_user="",
+            telegram_bot_token=None,
+            telegram_chat_id=None,
+        )
+        self.assertEqual(
+            build_single_service_choices(config),
+            ["GoFile", "Vikingfile", "Pixeldrain", "Direct"],
+        )
 
 
 class NotificationFormatTests(unittest.TestCase):

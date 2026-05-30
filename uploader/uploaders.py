@@ -183,27 +183,34 @@ def get_gofile_content(api_key: str, content_id: str) -> dict:
     return data["data"]
 
 
-def get_gofile_folder_url(api_key: str, folder_data: dict) -> str:
-    if download_page := folder_data.get("downloadPage") or folder_data.get("link"):
+def get_gofile_folder_url(api_key: str | None, folder_data: dict) -> str:
+    if download_page := (
+        folder_data.get("downloadPage")
+        or folder_data.get("link")
+        or folder_data.get("directLink")
+    ):
         return download_page
-    if code := folder_data.get("code"):
+    if code := folder_data.get("code") or folder_data.get("fileCode"):
         return f"https://gofile.io/d/{code}"
 
-    folder_id = folder_data.get("id")
+    folder_id = folder_data.get("id") or folder_data.get("folderId")
     if not folder_id:
         raise RuntimeError("GoFile folder creation succeeded but did not return a folder URL or ID.")
 
+    if not api_key:
+        return f"https://gofile.io/d/{folder_id}"
+
     content = get_gofile_content(api_key, folder_id)
-    if download_page := content.get("downloadPage") or content.get("link"):
+    if download_page := content.get("downloadPage") or content.get("link") or content.get("directLink"):
         return download_page
-    if code := content.get("code"):
+    if code := content.get("code") or content.get("fileCode"):
         return f"https://gofile.io/d/{code}"
     raise RuntimeError("GoFile folder lookup succeeded but did not return a public URL.")
 
 
 def upload_gofile(
     file_path: Path,
-    api_key: str,
+    api_key: str | None,
     callback: ProgressCallback,
     cancelled: Callable[[], bool] | None = None,
 ) -> UploadResult:
@@ -213,16 +220,22 @@ def upload_gofile(
     file_size = file_path.stat().st_size
     file_hash = calculate_file_hash(file_path)
     file_type = guess_file_type(file_path)
-    account = get_gofile_account(api_key)
-    folder = create_gofile_public_folder(api_key, account["rootFolder"], file_path.name)
-    folder_url = get_gofile_folder_url(api_key, folder)
+    folder_url: str | None = None
     with file_path.open("rb") as fh:
-        encoder = MultipartEncoder(
-            fields={
+        if api_key:
+            account = get_gofile_account(api_key)
+            folder = create_gofile_public_folder(api_key, account["rootFolder"], file_path.name)
+            folder_url = get_gofile_folder_url(api_key, folder)
+            upload_fields = {
                 "folderId": folder["id"],
                 "file": (file_path.name, fh, "application/octet-stream"),
             }
-        )
+        else:
+            upload_fields = {
+                "file": (file_path.name, fh, "application/octet-stream"),
+            }
+
+        encoder = MultipartEncoder(fields=upload_fields)
 
         def guarded_callback(current) -> None:
             if is_cancelled():
@@ -235,24 +248,27 @@ def upload_gofile(
             encoder,
             guarded_callback,
         )
+        headers = {"Content-Type": monitor.content_type}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         response = requests.post(
             "https://upload.gofile.io/uploadfile",
             data=monitor,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": monitor.content_type,
-            },
+            headers=headers,
             timeout=300,
         )
     response.raise_for_status()
-    data = response.json()
-    if data.get("status") != "ok":
-        raise RuntimeError(f"GoFile upload failed: {data}")
+    response_payload = response.json()
+    if response_payload.get("status") != "ok":
+        raise RuntimeError(f"GoFile upload failed: {response_payload}")
+    data = response_payload.get("data") or {}
+    if not folder_url:
+        folder_url = get_gofile_folder_url(api_key, data)
     return UploadResult(
         service="GoFile",
         success=True,
         url=folder_url,
-        payload=data,
+        payload=response_payload,
         file_hash=file_hash,
         file_size=file_size,
         upload_date=datetime.now().isoformat(),

@@ -6,34 +6,39 @@ uv tool install git+https://github.com/ardiandideyashidiq/uploader.git
 
 ## Setup
 
-Run interactive setup to configure credentials:
+No setup is required for the default upload flow.
+
+Run interactive setup only if you want to add optional credentials later:
 
 ```bash
 uploader --setup
 ```
 
-When prompted, paste your config in this format and press Esc+Enter:
+When prompted, paste any optional config in this format and press Esc+Enter:
 
 ```yaml
 pixeldrain_key: YOUR_PIXELDRAIN_KEY
 gofile_key: YOUR_GOFILE_KEY
 vikingfile_user: YOUR_VIKINGFILE_USER
-# Optional (leave empty or delete lines below):
+# Optional:
 telegram_bot_token:
 telegram_chat_id:
 ```
 
-Config saved to `~/.config/uploader/config` (YAML).
+Config saved to `~/.config/uploader/config` (YAML). You can leave any field blank or omit it.
 
 ## Usage
 
-Upload a file (parallel to Pixeldrain, GoFile, Vikingfile):
+Upload a file anonymously by default:
 
 ```bash
 uploader <file>
 # or use the short alias:
 up <file>
 ```
+
+Default uploads go to GoFile and VikingFile without requiring any API key.
+If you later configure a Pixeldrain key, it will be added automatically.
 
 Upload to a single service:
 
@@ -55,7 +60,9 @@ uploader --no-telegram <file>
 
 ## Telegram Notifications
 
-Telegram notifications include:
+Telegram notifications are sent only when `telegram_bot_token` and `telegram_chat_id` are configured.
+
+When enabled, notifications include:
 - Filename prominently at the top
 - Service status (success/failure) in a blockquote
 - Download buttons (InlineKeyboard) below the message for each successful upload
@@ -90,14 +97,15 @@ Uploaded: <code>2026-05-13 22:12:03 WIB (UTC+7)</code></blockquote>
 
 ## Config
 
-Edit config manually at `~/.config/uploader/config`:
+Edit config manually at `~/.config/uploader/config` if you want to opt into extra services:
 
 ```yaml
+# Optional:
 pixeldrain_key: your_pixeldrain_key
 gofile_key: your_gofile_key
 vikingfile_user: your_vikingfile_user
-telegram_bot_token: your_bot_token  # optional
-telegram_chat_id: your_chat_id      # optional
+telegram_bot_token: your_bot_token
+telegram_chat_id: your_chat_id
 ```
 
 Custom config path:

@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.filesize import decimal
 from rich.status import Status
 
-from uploader.config import AppConfig, DEFAULT_CONFIG_PATH, get_config_path
+from uploader.config import AppConfig, get_config_path
 from uploader.notifier import build_download_keyboard, format_telegram_message, send_telegram_message
 from uploader.progress import create_progress
 from uploader.retry import retry_upload
@@ -50,7 +50,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--setup",
         action="store_true",
-        help="Run interactive setup to configure credentials.",
+        help="Run interactive setup to save optional credentials.",
     )
     parser.add_argument("--pixeldrain-key")
     parser.add_argument("--gofile-key")
@@ -84,15 +84,14 @@ def run_setup(config_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     console.print("[bold]Uploader Setup[/bold]")
-    console.print("Paste your config in YAML format:\n")
+    console.print("Paste optional config in YAML format:\n")
 
-    console.print("[dim]# Required:")
+    console.print("[dim]# Optional:")
     console.print("[dim]pixeldrain_key: YOUR_PIXELDRAIN_KEY")
     console.print("[dim]gofile_key: YOUR_GOFILE_KEY")
     console.print("[dim]vikingfile_user: YOUR_VIKINGFILE_USER")
-    console.print("[dim]# Optional (leave empty or delete):")
-    console.print("[dim]# telegram_bot_token: YOUR_TOKEN")
-    console.print("[dim]# telegram_chat_id: YOUR_CHAT_ID")
+    console.print("[dim]telegram_bot_token: YOUR_TOKEN")
+    console.print("[dim]telegram_chat_id: YOUR_CHAT_ID")
     console.print("")
 
     while True:
@@ -111,17 +110,17 @@ def run_setup(config_path: Path) -> None:
             console.print("[red]Invalid format: expected YAML object[/red]")
             continue
 
-        missing = []
-        for key in ("pixeldrain_key", "gofile_key", "vikingfile_user"):
-            if not config_data.get(key):
-                missing.append(key)
-
-        if missing:
-            console.print(f"[red]Missing required fields: {', '.join(missing)}[/red]")
-            continue
-
-        config_data["telegram_bot_token"] = config_data.get("telegram_bot_token") or None
-        config_data["telegram_chat_id"] = config_data.get("telegram_chat_id") or None
+        config_data = {
+            key: config_data.get(key) or None
+            for key in (
+                "pixeldrain_key",
+                "gofile_key",
+                "vikingfile_user",
+                "telegram_bot_token",
+                "telegram_chat_id",
+            )
+            if config_data.get(key)
+        }
 
         with open(config_path, "w") as f:
             yaml.safe_dump(config_data, f, sort_keys=False)
@@ -130,15 +129,15 @@ def run_setup(config_path: Path) -> None:
         return
 
 
-def check_config(config: AppConfig) -> list[str]:
-    missing = []
-    if not config.pixeldrain_key:
-        missing.append("pixeldrain_key")
-    if not config.gofile_key:
-        missing.append("gofile_key")
-    if not config.vikingfile_user:
-        missing.append("vikingfile_user")
-    return missing
+def build_default_services(config: AppConfig) -> list[str]:
+    services = ["GoFile", "Vikingfile"]
+    if config.pixeldrain_key:
+        services.append("Pixeldrain")
+    return services
+
+
+def build_single_service_choices(config: AppConfig) -> list[str]:
+    return [*build_default_services(config), "Direct"]
 
 
 def build_failure_result(service: str, error: Exception) -> UploadResult:
@@ -152,15 +151,16 @@ def build_cancelled_result(service: str) -> UploadResult:
     )
 
 
-def select_single_service() -> str:
+def select_single_service(config: AppConfig) -> str:
     if not sys.stdin.isatty():
         raise RuntimeError("Single upload requires an interactive terminal.")
 
+    choices = build_single_service_choices(config)
     choice = inquirer.select(
         message="Select upload destination:",
-        choices=["Pixeldrain", "GoFile", "Vikingfile", "Direct"],
+        choices=choices,
     ).execute()
-    if choice not in {"Pixeldrain", "GoFile", "Vikingfile", "Direct"}:
+    if choice not in set(choices):
         raise RuntimeError("Invalid single upload selection.")
     return choice
 
@@ -186,13 +186,12 @@ def main(argv: list[str] | None = None) -> int:
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
         )
-        missing = check_config(config)
 
-        if args.setup or missing:
+        if args.setup:
             if not sys.stdin.isatty():
                 console.print("[red]Setup requires an interactive terminal.[/red]")
                 return 1
-            console.print("[yellow]Config incomplete or missing. Running setup...[/yellow]\n")
+            console.print("[yellow]Running optional setup...[/yellow]\n")
             run_setup(config_path)
             config = AppConfig.from_sources(
                 config_path=config_path,
@@ -202,25 +201,13 @@ def main(argv: list[str] | None = None) -> int:
                 telegram_bot_token=args.telegram_bot_token,
                 telegram_chat_id=args.telegram_chat_id,
             )
-            missing = check_config(config)
-            if missing:
-                console.print(f"[red]Still missing: {', '.join(missing)}[/red]")
-                return 1
 
-        if not args.no_telegram and (
-            not config.telegram_bot_token or not config.telegram_chat_id
-        ):
-            console.print(
-                "[red]Telegram is required unless --no-telegram is used.[/red]"
-            )
-            return 2
-
-        services = ["Pixeldrain", "GoFile", "Vikingfile"]
+        services = build_default_services(config)
         if args.direct:
             services = ["Direct"]
         elif args.single:
             try:
-                services = [select_single_service()]
+                services = [select_single_service(config)]
             except RuntimeError as error:
                 console.print(f"[red]{error}[/red]")
                 return 2
@@ -294,8 +281,8 @@ def main(argv: list[str] | None = None) -> int:
             }
             uploader_credentials = {
                 "Pixeldrain": config.pixeldrain_key,
-                "GoFile": config.gofile_key,
-                "Vikingfile": config.vikingfile_user,
+                "GoFile": config.gofile_key or None,
+                "Vikingfile": config.vikingfile_user or "",
                 "Direct": None,
             }
 
@@ -399,7 +386,11 @@ def main(argv: list[str] | None = None) -> int:
 
         exit_code = 0 if all(result.success for result in results) else 1
 
-        if not args.no_telegram:
+        if (
+            not args.no_telegram
+            and config.telegram_bot_token
+            and config.telegram_chat_id
+        ):
             try:
                 with Status("Sending Telegram notification...", console=console, spinner="dots"):
                     send_telegram_message(

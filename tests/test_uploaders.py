@@ -39,6 +39,33 @@ class UploadGoFileTests(unittest.TestCase):
 
     @patch("uploader.uploaders.requests.post")
     @patch("uploader.uploaders.requests.get")
+    def test_upload_gofile_supports_anonymous_upload_without_api_key(self, mock_get, mock_post) -> None:
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        mock_post.return_value = FakeResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "directLink": "https://gofile.io/d/anon123",
+                    "fileCode": "anon123",
+                },
+            }
+        )
+
+        result = upload_gofile(file_path, None, lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.url, "https://gofile.io/d/anon123")
+        mock_get.assert_not_called()
+        self.assertEqual(mock_post.call_count, 1)
+        upload_call = mock_post.call_args
+        self.assertEqual(upload_call.args[0], "https://upload.gofile.io/uploadfile")
+        self.assertNotIn("Authorization", upload_call.kwargs["headers"])
+        self.assertNotIn("folderId", upload_call.kwargs["data"].encoder.fields)
+
+    @patch("uploader.uploaders.requests.post")
+    @patch("uploader.uploaders.requests.get")
     def test_upload_gofile_creates_public_folder_and_returns_folder_url(self, mock_get, mock_post) -> None:
         temp_dir, file_path = self._make_file()
         self.addCleanup(temp_dir.cleanup)
