@@ -197,7 +197,7 @@ class SourceForgeClient:
         command: list[str],
         password: str,
         input_text: str | None = None,
-    ) -> None:
+    ) -> str | None:
         try:
             import pexpect
         except ImportError as error:  # pragma: no cover - dependency error path
@@ -215,6 +215,7 @@ class SourceForgeClient:
             child.expect(pexpect.EOF)
             if child.exitstatus not in (0, None):
                 raise SourceForgeError(f"Command failed with exit status {child.exitstatus}.")
+            return child.before
         finally:
             child.close(force=True)
 
@@ -239,13 +240,13 @@ class SourceForgeClient:
         ]
         if self.config.auth_mode == "password_helper":
             password = self._run_password_helper()
-            self._run_with_password_helper(command, password, input_text=input_text)
-            return None
+            output = self._run_with_password_helper(command, password, input_text=input_text)
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout=output or "")
         if self.config.auth_mode == "password":
             if not self.config.password:
                 raise SourceForgeError("Password auth requires a password.")
-            self._run_with_password_helper(command, self.config.password, input_text=input_text)
-            return None
+            output = self._run_with_password_helper(command, self.config.password, input_text=input_text)
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout=output or "")
         try:
             return self._run_subprocess(command, input_text=input_text, capture_output=True)
         except subprocess.CalledProcessError as error:
@@ -270,12 +271,9 @@ class SourceForgeClient:
     def list_remote(self, remote_dir: str) -> list[str]:
         normalized = normalize_remote_dir(remote_dir)
         commands = [f"cd {self._remote_dir_abs(normalized)}", "ls -l"]
-        result = self._run_subprocess(
-            [*_sftp_command(self.config), "-b", "-", f"{self.config.username}@{self.config.host}"],
-            input_text="\n".join(commands) + "\n",
-            capture_output=True,
-        )
-        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+        result = self._run_sftp_batch("\n".join(commands) + "\n")
+        stdout = result.stdout if result else ""
+        return [line.strip() for line in stdout.splitlines() if line.strip()]
 
     def list_remote_entries(self, remote_dir: str) -> list[RemoteEntry]:
         entries: list[RemoteEntry] = []

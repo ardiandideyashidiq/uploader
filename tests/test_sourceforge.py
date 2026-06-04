@@ -139,9 +139,11 @@ class SourceForgeCommandTests(unittest.TestCase):
         mock_ensure_dir.assert_not_called()
         mock_run_command.assert_called_once()
 
-    @patch.object(SourceForgeClient, "_run_subprocess")
-    def test_list_remote_returns_output_lines(self, mock_run) -> None:
-        mock_run.return_value.stdout = "-rw-r--r-- 1 user group 12 Jan 1 00:00 ROM.zip\n"
+    @patch.object(SourceForgeClient, "_run_sftp_batch")
+    def test_list_remote_returns_output_lines(self, mock_sftp) -> None:
+        mock_sftp.return_value = subprocess.CompletedProcess(
+            args=["sftp"], returncode=0, stdout="-rw-r--r-- 1 user group 12 Jan 1 00:00 ROM.zip\n"
+        )
         client = SourceForgeClient(SourceForgeConfig(username="user", project="infinity-x"))
 
         lines = client.list_remote("P661N/16/vanilla")
