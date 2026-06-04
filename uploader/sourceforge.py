@@ -43,7 +43,6 @@ class SourceForgeConfig:
     host: str = SOURCEFORGE_HOST
     auth_mode: str = "ssh_key"
     ssh_key_path: str | None = None
-    password: str | None = None
     password_helper: str | None = None
 
     @property
@@ -120,8 +119,6 @@ def hash_file(path: Path, algorithm: str = "sha256") -> str:
 
 def _ssh_command(config: SourceForgeConfig) -> list[str]:
     command = ["ssh", "-o", "LogLevel=ERROR", "-o", "StrictHostKeyChecking=accept-new"]
-    if config.auth_mode == "password":
-        command.extend(["-o", "PreferredAuthentications=password"])
     if config.ssh_key_path:
         command.extend(["-i", config.ssh_key_path])
     return command
@@ -129,8 +126,6 @@ def _ssh_command(config: SourceForgeConfig) -> list[str]:
 
 def _sftp_command(config: SourceForgeConfig) -> list[str]:
     command = ["sftp", "-oLogLevel=ERROR", "-o", "StrictHostKeyChecking=accept-new"]
-    if config.auth_mode == "password":
-        command.extend(["-o", "PreferredAuthentications=password"])
     if config.ssh_key_path:
         command.extend(["-i", config.ssh_key_path])
     return command
@@ -231,11 +226,6 @@ class SourceForgeClient:
             password = self._run_password_helper()
             self._run_with_password_helper(command, password, input_text=input_text)
             return
-        if self.config.auth_mode == "password":
-            if not self.config.password:
-                raise SourceForgeError("Password auth requires a password.")
-            self._run_with_password_helper(command, self.config.password, input_text=input_text)
-            return
         self._run_subprocess(command, input_text=input_text)
 
     def _run_sftp_batch(self, input_text: str) -> subprocess.CompletedProcess[str] | None:
@@ -248,11 +238,6 @@ class SourceForgeClient:
         if self.config.auth_mode == "password_helper":
             password = self._run_password_helper()
             output = self._run_with_password_helper(command, password, input_text=input_text)
-            return subprocess.CompletedProcess(args=command, returncode=0, stdout=output or "")
-        if self.config.auth_mode == "password":
-            if not self.config.password:
-                raise SourceForgeError("Password auth requires a password.")
-            output = self._run_with_password_helper(command, self.config.password, input_text=input_text)
             return subprocess.CompletedProcess(args=command, returncode=0, stdout=output or "")
         try:
             return self._run_subprocess(command, input_text=input_text, capture_output=True)

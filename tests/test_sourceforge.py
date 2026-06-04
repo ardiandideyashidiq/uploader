@@ -227,25 +227,6 @@ class SourceForgeCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("-e") + 1], "ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new")
 
     @patch.object(SourceForgeClient, "_run_with_password_helper")
-    def test_password_mode_dispatches_to_pexpect_path(self, mock_run_with_password_helper) -> None:
-        client = SourceForgeClient(
-            SourceForgeConfig(
-                username="user",
-                project="infinity-x",
-                auth_mode="password",
-                password="hunter2",
-            )
-        )
-
-        client._run_command(["sftp", "-b", "-", "user@frs.sourceforge.net"], input_text="ls -l\n")
-
-        mock_run_with_password_helper.assert_called_once_with(
-            ["sftp", "-b", "-", "user@frs.sourceforge.net"],
-            "hunter2",
-            input_text="ls -l\n",
-        )
-
-    @patch.object(SourceForgeClient, "_run_with_password_helper")
     @patch.object(SourceForgeClient, "_run_password_helper", return_value="secret")
     def test_password_helper_mode_dispatches_to_pexpect_path(self, mock_helper, mock_run_with_password_helper) -> None:
         client = SourceForgeClient(
