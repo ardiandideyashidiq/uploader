@@ -119,14 +119,18 @@ def hash_file(path: Path, algorithm: str = "sha256") -> str:
 
 
 def _ssh_command(config: SourceForgeConfig) -> list[str]:
-    command = ["ssh", "-o", "LogLevel=ERROR"]
+    command = ["ssh", "-o", "LogLevel=ERROR", "-o", "StrictHostKeyChecking=accept-new"]
+    if config.auth_mode == "password":
+        command.extend(["-o", "PreferredAuthentications=password"])
     if config.ssh_key_path:
         command.extend(["-i", config.ssh_key_path])
     return command
 
 
 def _sftp_command(config: SourceForgeConfig) -> list[str]:
-    command = ["sftp", "-oLogLevel=ERROR"]
+    command = ["sftp", "-oLogLevel=ERROR", "-o", "StrictHostKeyChecking=accept-new"]
+    if config.auth_mode == "password":
+        command.extend(["-o", "PreferredAuthentications=password"])
     if config.ssh_key_path:
         command.extend(["-i", config.ssh_key_path])
     return command
@@ -207,7 +211,10 @@ class SourceForgeClient:
         try:
             index = child.expect([r"[Pp]assword:", pexpect.EOF, pexpect.TIMEOUT])
             if index != 0:
-                raise SourceForgeError("Password prompt did not appear.")
+                details = ""
+                if child.before:
+                    details = f" Got: {child.before[:300]}"
+                raise SourceForgeError(f"Password prompt did not appear.{details}")
             child.sendline(password)
             if input_text:
                 child.send(input_text)

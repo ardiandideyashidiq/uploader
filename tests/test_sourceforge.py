@@ -76,7 +76,11 @@ class SourceForgeCommandTests(unittest.TestCase):
         client._run_sftp_batch("ls -l\n")
 
         command = mock_run.call_args.args[0]
-        self.assertEqual(command[:3], ["sftp", "-oLogLevel=ERROR", "-b"])
+        self.assertEqual(command[0], "sftp")
+        self.assertIn("-oLogLevel=ERROR", command)
+        strict_idx = command.index("-o")
+        self.assertEqual(command[strict_idx + 1], "StrictHostKeyChecking=accept-new")
+        self.assertIn("-b", command)
         self.assertEqual(command[-1], "user@frs.sourceforge.net")
         self.assertTrue(mock_run.call_args.kwargs["capture_output"])
         self.assertEqual(mock_run.call_args.kwargs["input"], "ls -l\n")
@@ -201,7 +205,7 @@ class SourceForgeCommandTests(unittest.TestCase):
 
         command = mock_run.call_args.args[0]
         self.assertIn("-e", command)
-        self.assertEqual(command[command.index("-e") + 1], "ssh -o LogLevel=ERROR -i /home/user/.ssh/id_ed25519")
+        self.assertEqual(command[command.index("-e") + 1], "ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -i /home/user/.ssh/id_ed25519")
 
     @patch.object(SourceForgeClient, "_run_command")
     def test_interactive_password_mode_omits_identity_file(self, mock_run) -> None:
@@ -220,7 +224,7 @@ class SourceForgeCommandTests(unittest.TestCase):
 
         command = mock_run.call_args.args[0]
         self.assertIn("-e", command)
-        self.assertEqual(command[command.index("-e") + 1], "ssh -o LogLevel=ERROR")
+        self.assertEqual(command[command.index("-e") + 1], "ssh -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new")
 
     @patch.object(SourceForgeClient, "_run_with_password_helper")
     def test_password_mode_dispatches_to_pexpect_path(self, mock_run_with_password_helper) -> None:
