@@ -43,6 +43,7 @@ class SourceForgeConfig:
     host: str = SOURCEFORGE_HOST
     auth_mode: str = "ssh_key"
     ssh_key_path: str | None = None
+    password: str | None = None
     password_helper: str | None = None
 
     @property
@@ -222,6 +223,11 @@ class SourceForgeClient:
             password = self._run_password_helper()
             self._run_with_password_helper(command, password, input_text=input_text)
             return
+        if self.config.auth_mode == "password":
+            if not self.config.password:
+                raise SourceForgeError("Password auth requires a password.")
+            self._run_with_password_helper(command, self.config.password, input_text=input_text)
+            return
         self._run_subprocess(command, input_text=input_text)
 
     def _run_sftp_batch(self, input_text: str) -> subprocess.CompletedProcess[str] | None:
@@ -234,6 +240,11 @@ class SourceForgeClient:
         if self.config.auth_mode == "password_helper":
             password = self._run_password_helper()
             self._run_with_password_helper(command, password, input_text=input_text)
+            return None
+        if self.config.auth_mode == "password":
+            if not self.config.password:
+                raise SourceForgeError("Password auth requires a password.")
+            self._run_with_password_helper(command, self.config.password, input_text=input_text)
             return None
         try:
             return self._run_subprocess(command, input_text=input_text, capture_output=True)

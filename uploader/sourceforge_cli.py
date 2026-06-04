@@ -30,8 +30,9 @@ def _add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--username")
     parser.add_argument("--project")
     parser.add_argument("--remote-root")
-    parser.add_argument("--auth-mode", choices=["ssh_key", "interactive_password", "password_helper"], default="ssh_key")
+    parser.add_argument("--auth-mode", choices=["ssh_key", "interactive_password", "password", "password_helper"], default="ssh_key")
     parser.add_argument("--ssh-key-path")
+    parser.add_argument("--password")
     parser.add_argument("--password-helper")
 
 
@@ -84,6 +85,7 @@ def _build_config(profile: SourceForgeProfile) -> SourceForgeConfig:
         remote_root=profile.remote_root,
         auth_mode=profile.auth_mode or "ssh_key",
         ssh_key_path=profile.ssh_key_path,
+        password=profile.password,
         password_helper=profile.password_helper,
     )
 
@@ -95,6 +97,7 @@ def _build_seed_profile(args: argparse.Namespace) -> SourceForgeProfile:
         remote_root=args.remote_root,
         auth_mode=args.auth_mode,
         ssh_key_path=args.ssh_key_path,
+        password=args.password,
         password_helper=args.password_helper,
     )
 
@@ -169,18 +172,24 @@ def _prompt_profile(profile: SourceForgeProfile, console: Console) -> SourceForg
         choices=[
             {"name": "SSH key", "value": "ssh_key"},
             {"name": "Interactive password", "value": "interactive_password"},
+            {"name": "Password (saved in config)", "value": "password"},
             {"name": "Password helper", "value": "password_helper"},
         ],
         default=profile.auth_mode or "ssh_key",
     ).execute()
 
     ssh_key_path: str | None = None
+    password: str | None = None
     password_helper: str | None = None
     if auth_mode == "ssh_key":
         ssh_key_path = inquirer.text(
             message="SSH key path (optional):",
             default=profile.ssh_key_path or "",
         ).execute() or None
+    elif auth_mode == "password":
+        password = inquirer.secret(
+            message="SourceForge password:",
+        ).execute()
     elif auth_mode == "password_helper":
         password_helper = inquirer.text(
             message="Password helper command:",
@@ -193,6 +202,7 @@ def _prompt_profile(profile: SourceForgeProfile, console: Console) -> SourceForg
         remote_root=remote_root or None,
         auth_mode=auth_mode,
         ssh_key_path=ssh_key_path,
+        password=password,
         password_helper=password_helper,
     )
 

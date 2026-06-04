@@ -65,6 +65,27 @@ class SourceForgeCliTests(unittest.TestCase):
         mock_client.return_value.upload_file.assert_called_once_with(Path("README.md"), "release/test/test2/", overwrite=False)
 
     @patch("uploader.sourceforge_cli.SourceForgeClient")
+    def test_upload_passes_password_to_config(self, mock_client) -> None:
+        mock_client.return_value.upload_file.return_value.url = "https://sourceforge.net/projects/infinity-x/files/a/b/ROM.zip/download"
+
+        with patch("sys.stdout", new=io.StringIO()):
+            exit_code = main([
+                "upload",
+                "ROM.zip",
+                "--username", "user",
+                "--project", "infinity-x",
+                "--remote-dir", "P661N/16/vanilla",
+                "--auth-mode", "password",
+                "--password", "hunter2",
+                "--no-telegram",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        config = mock_client.call_args[0][0]
+        self.assertEqual(config.password, "hunter2")
+        self.assertEqual(config.auth_mode, "password")
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
     def test_upload_remote_dir_flag_overrides_positional_remote_dir(self, mock_client) -> None:
         mock_client.return_value.upload_file.return_value.url = "https://sourceforge.net/projects/rdndds-release/files/override/README.md/download"
 
@@ -369,6 +390,27 @@ class SourceForgeCliTests(unittest.TestCase):
         self.assertEqual(text_calls[1].kwargs["default"], "existing_project")
         self.assertEqual(text_calls[2].kwargs["default"], "/custom/root")
         self.assertEqual(text_calls[3].kwargs["default"], "/home/user/.ssh/id_rsa")
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_password_auth_prompts_and_saves(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser", "myproject", "",
+        ]
+        mock_inquirer.secret.return_value.execute.return_value = "hunter2"
+        mock_inquirer.select.return_value.execute.return_value = "password"
+        mock_client.return_value.list_remote.return_value = []
+
+        with patch("sys.stdout", new=io.StringIO()):
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved.auth_mode, "password")
+        self.assertEqual(saved.password, "hunter2")
+        self.assertIsNone(saved.ssh_key_path)
+        self.assertIsNone(saved.password_helper)
 
     @patch("uploader.sourceforge_cli.SourceForgeClient")
     @patch("uploader.sourceforge_cli.save_profile")
