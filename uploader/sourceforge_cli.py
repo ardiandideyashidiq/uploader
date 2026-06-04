@@ -7,7 +7,10 @@ from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
 
+from rich.console import Console
 from rich.filesize import decimal
+
+from InquirerPy import inquirer
 
 from uploader.config import AppConfig
 from uploader.notifier import build_download_keyboard, send_telegram_message
@@ -17,7 +20,7 @@ from uploader.sourceforge import (
     SourceForgeError,
     generate_download_url,
 )
-from uploader.sourceforge_profile import SourceForgeProfile, resolve_profile
+from uploader.sourceforge_profile import SourceForgeProfile, get_profile_path, resolve_profile, save_profile
 from uploader.uploaders import format_file_size
 
 WIB = ZoneInfo("Asia/Jakarta")
@@ -65,6 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
     link = subparsers.add_parser("link", help="Print the public SourceForge download URL for a remote file.")
     link.add_argument("path")
     _add_common_options(link)
+
+    setup = subparsers.add_parser("setup", help="Interactively create/update SourceForge profile.")
+    _add_common_options(setup)
 
     return parser
 
@@ -134,6 +140,107 @@ def format_sourceforge_telegram_message(filename: str, result_url: str, payload:
     return "\n".join(lines)
 
 
+def _prompt_profile(profile: SourceForgeProfile, console: Console) -> SourceForgeProfile | None:
+    username = inquirer.text(
+        message="SourceForge username:",
+        default=profile.username or "",
+    ).execute()
+
+    if not username:
+        console.print("[red]Username is required.[/red]")
+        return None
+
+    project = inquirer.text(
+        message="SourceForge project:",
+        default=profile.project or "",
+    ).execute()
+
+    if not project:
+        console.print("[red]Project is required.[/red]")
+        return None
+
+    remote_root = inquirer.text(
+        message="Remote root (optional, defaults to /home/frs/project/<project>):",
+        default=profile.remote_root or "",
+    ).execute()
+
+    auth_mode = inquirer.select(
+        message="Authentication mode:",
+        choices=[
+            {"name": "SSH key", "value": "ssh_key"},
+            {"name": "Interactive password", "value": "interactive_password"},
+            {"name": "Password helper", "value": "password_helper"},
+        ],
+        default=profile.auth_mode or "ssh_key",
+    ).execute()
+
+    ssh_key_path: str | None = None
+    password_helper: str | None = None
+    if auth_mode == "ssh_key":
+        ssh_key_path = inquirer.text(
+            message="SSH key path (optional):",
+            default=profile.ssh_key_path or "",
+        ).execute() or None
+    elif auth_mode == "password_helper":
+        password_helper = inquirer.text(
+            message="Password helper command:",
+            default=profile.password_helper or "",
+        ).execute() or None
+
+    return SourceForgeProfile(
+        username=username,
+        project=project,
+        remote_root=remote_root or None,
+        auth_mode=auth_mode,
+        ssh_key_path=ssh_key_path,
+        password_helper=password_helper,
+    )
+
+
+def run_setup(profile: SourceForgeProfile) -> None:
+    console = Console()
+    console.print("[bold]SourceForge Profile Setup[/bold]")
+    console.print("Press Enter to accept default values shown in brackets.\n")
+
+    new_profile = _prompt_profile(profile, console)
+    if new_profile is None:
+        return
+
+    while True:
+        console.print("[yellow]Verifying connection...[/yellow]")
+        config = _build_config(new_profile)
+        client = SourceForgeClient(config)
+        try:
+            client.list_remote("")
+            console.print("[green]Connection successful![/green]")
+            save_profile(new_profile)
+            console.print(f"[green]Profile saved to {get_profile_path()}[/green]")
+            return
+        except SourceForgeError as error:
+            console.print(f"[red]Connection failed: {error}[/red]")
+            action = inquirer.select(
+                message="What would you like to do?",
+                choices=[
+                    {"name": "Retry", "value": "retry"},
+                    {"name": "Edit credentials", "value": "edit"},
+                    {"name": "Save anyway (skip check)", "value": "save"},
+                    {"name": "Cancel", "value": "cancel"},
+                ],
+            ).execute()
+            if action == "save":
+                save_profile(new_profile)
+                console.print(f"[green]Profile saved to {get_profile_path()}[/green]")
+                return
+            if action == "cancel":
+                console.print("[yellow]Setup cancelled.[/yellow]")
+                return
+            if action == "edit":
+                new_profile = _prompt_profile(new_profile, console)
+                if new_profile is None:
+                    return
+                continue
+
+
 def _load_telegram_config(args: argparse.Namespace) -> AppConfig:
     return AppConfig.from_sources(
         pixeldrain_key=None,
@@ -172,6 +279,10 @@ def main(argv: list[str] | None = None) -> int:
     seed_profile = _build_seed_profile(args)
 
     resolved_profile = resolve_profile(cli_profile=seed_profile)
+
+    if args.command == "setup":
+        run_setup(resolved_profile)
+        return 0
 
     try:
         if args.command == "link":

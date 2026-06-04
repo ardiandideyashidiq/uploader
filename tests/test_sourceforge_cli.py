@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from uploader.sourceforge_cli import main
-from uploader.sourceforge_profile import SourceForgeProfile
+from uploader.sourceforge import SourceForgeError
+from uploader.sourceforge_cli import main, run_setup
+from uploader.sourceforge_profile import SourceForgeProfile, get_profile_path, save_profile
 
 
 class SourceForgeCliTests(unittest.TestCase):
@@ -24,7 +25,8 @@ class SourceForgeCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("usage: uploader sourceforge", stdout.getvalue())
-        self.assertIn("{upload,list,rename,delete,link}", stdout.getvalue())
+        self.assertIn("setup", stdout.getvalue())
+        self.assertIn("{upload,list,rename,delete,link,setup}", stdout.getvalue())
 
     @patch("uploader.sourceforge_cli.SourceForgeClient")
     def test_upload_flag_routes_to_client(self, mock_client) -> None:
@@ -305,6 +307,209 @@ class SourceForgeCliTests(unittest.TestCase):
                     "--upload", "ROM.zip",
                     "--remote-dir", "P661N/16/vanilla",
                 ])
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_prompts_and_saves_profile(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser",
+            "myproject",
+            "/custom/root",
+            "/home/user/.ssh/id_rsa",
+        ]
+        mock_inquirer.select.return_value.execute.return_value = "ssh_key"
+        mock_client.return_value.list_remote.return_value = []
+
+        with patch("sys.stdout", new=io.StringIO()):
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        mock_client.return_value.list_remote.assert_called_once_with("")
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved.username, "myuser")
+        self.assertEqual(saved.project, "myproject")
+        self.assertEqual(saved.remote_root, "/custom/root")
+        self.assertEqual(saved.auth_mode, "ssh_key")
+        self.assertEqual(saved.ssh_key_path, "/home/user/.ssh/id_rsa")
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_prefills_defaults_from_resolved_profile(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "existing_user",
+            "existing_project",
+            "",
+            "",
+        ]
+        mock_inquirer.select.return_value.execute.return_value = "ssh_key"
+        mock_client.return_value.list_remote.return_value = []
+
+        with (
+            patch("sys.stdout", new=io.StringIO()),
+            patch(
+                "uploader.sourceforge_cli.resolve_profile",
+                return_value=SourceForgeProfile(
+                    username="existing_user",
+                    project="existing_project",
+                    remote_root="/custom/root",
+                    auth_mode="ssh_key",
+                    ssh_key_path="/home/user/.ssh/id_rsa",
+                ),
+            ),
+        ):
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        # Defaults should be passed to inquirer prompts
+        text_calls = mock_inquirer.text.call_args_list
+        self.assertEqual(text_calls[0].kwargs["default"], "existing_user")
+        self.assertEqual(text_calls[1].kwargs["default"], "existing_project")
+        self.assertEqual(text_calls[2].kwargs["default"], "/custom/root")
+        self.assertEqual(text_calls[3].kwargs["default"], "/home/user/.ssh/id_rsa")
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_skips_ssh_key_path_for_non_ssh_auth(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser",
+            "myproject",
+            "",
+            "/path/to/helper",
+        ]
+        mock_inquirer.select.return_value.execute.return_value = "password_helper"
+        mock_client.return_value.list_remote.return_value = []
+
+        with patch("sys.stdout", new=io.StringIO()):
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved.auth_mode, "password_helper")
+        self.assertEqual(saved.password_helper, "/path/to/helper")
+        self.assertIsNone(saved.ssh_key_path)
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_requires_username(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = ["", ""]
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Username is required", stdout.getvalue())
+        mock_save.assert_not_called()
+        mock_client.assert_not_called()
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_requires_project(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = ["myuser", ""]
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Project is required", stdout.getvalue())
+        mock_save.assert_not_called()
+        mock_client.assert_not_called()
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_connection_failure_saves_anyway(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser", "myproject", "", "",
+        ]
+        mock_inquirer.select.return_value.execute.side_effect = [
+            "ssh_key",
+            "save",
+        ]
+        mock_client.return_value.list_remote.side_effect = SourceForgeError("Connection refused")
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Connection failed", stdout.getvalue())
+        self.assertIn("saved", stdout.getvalue().lower())
+        mock_save.assert_called_once()
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_connection_failure_cancels(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser", "myproject", "", "",
+        ]
+        mock_inquirer.select.return_value.execute.side_effect = [
+            "ssh_key",
+            "cancel",
+        ]
+        mock_client.return_value.list_remote.side_effect = SourceForgeError("Connection refused")
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("cancelled", stdout.getvalue().lower())
+        mock_save.assert_not_called()
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_connection_failure_retry_then_succeeds(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser", "myproject", "", "",
+        ]
+        mock_inquirer.select.return_value.execute.side_effect = [
+            "ssh_key",
+            "retry",
+        ]
+        mock_client.return_value.list_remote.side_effect = [
+            SourceForgeError("Connection refused"),
+            [],
+        ]
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(mock_client.return_value.list_remote.call_count, 2)
+        self.assertIn("Connection successful", stdout.getvalue())
+        mock_save.assert_called_once()
+
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.inquirer")
+    def test_setup_connection_failure_edit_reprompts(self, mock_inquirer, mock_save, mock_client) -> None:
+        mock_inquirer.text.return_value.execute.side_effect = [
+            "myuser", "myproject", "", "",
+            "myuser", "myproject", "/new/root", "",
+        ]
+        mock_inquirer.select.return_value.execute.side_effect = [
+            "ssh_key",
+            "edit",
+            "ssh_key",
+        ]
+        mock_client.return_value.list_remote.side_effect = [
+            SourceForgeError("Connection refused"),
+            [],
+        ]
+
+        with patch("sys.stdout", new=io.StringIO()):
+            exit_code = main(["setup"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(mock_client.return_value.list_remote.call_count, 2)
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved.remote_root, "/new/root")
 
 
 if __name__ == "__main__":
