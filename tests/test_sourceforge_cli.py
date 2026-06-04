@@ -64,6 +64,37 @@ class SourceForgeCliTests(unittest.TestCase):
         self.assertIn("download", stdout.getvalue())
         mock_client.return_value.upload_file.assert_called_once_with(Path("README.md"), "release/test/test2/", overwrite=False)
 
+    @patch("uploader.sourceforge_cli.save_profile")
+    @patch("uploader.sourceforge_cli.SourceForgeClient")
+    @patch("uploader.sourceforge_cli.resolve_profile")
+    def test_upload_single_positional_file_auto_detects_remote_dir(
+        self,
+        mock_resolve,
+        mock_client,
+        mock_save,
+    ) -> None:
+        mock_resolve.return_value = SourceForgeProfile(
+            username="user",
+            project="infinity-x",
+            last_remote_dir="P661N/16/vanilla",
+        )
+        mock_client.return_value.upload_file.return_value.url = "https://sourceforge.net/projects/infinity-x/files/a/b/ROM.zip/download"
+
+        temp_dir, file_path = self._make_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch("sys.stdout", new=io.StringIO()) as stdout:
+            exit_code = main([
+                "upload",
+                str(file_path),
+                "--no-telegram",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        mock_client.return_value.upload_file.assert_called_once_with(file_path, "P661N/16/vanilla", overwrite=False)
+        mock_save.assert_called_once()
+        self.assertEqual(mock_save.call_args[0][0].last_remote_dir, "P661N/16/vanilla")
+
     @patch("uploader.sourceforge_cli.SourceForgeClient")
     def test_upload_remote_dir_flag_overrides_positional_remote_dir(self, mock_client) -> None:
         mock_client.return_value.upload_file.return_value.url = "https://sourceforge.net/projects/rdndds-release/files/override/README.md/download"

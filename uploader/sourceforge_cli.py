@@ -20,7 +20,7 @@ from uploader.sourceforge import (
     SourceForgeError,
     generate_download_url,
 )
-from uploader.sourceforge_profile import SourceForgeProfile, get_profile_path, resolve_profile, save_profile
+from uploader.sourceforge_profile import SourceForgeProfile, get_profile_path, load_profile, resolve_profile, save_profile
 from uploader.uploaders import format_file_size
 
 WIB = ZoneInfo("Asia/Jakarta")
@@ -159,9 +159,10 @@ def _prompt_profile(profile: SourceForgeProfile, console: Console) -> SourceForg
         console.print("[red]Project is required.[/red]")
         return None
 
+    default_remote_root = f"/home/frs/project/{project}" if project else ""
     remote_root = inquirer.text(
-        message="Remote root (optional, defaults to /home/frs/project/<project>):",
-        default=profile.remote_root or "",
+        message="Remote root (optional):",
+        default=profile.remote_root or default_remote_root,
     ).execute()
 
     auth_mode = inquirer.select(
@@ -251,14 +252,18 @@ def _load_telegram_config(args: argparse.Namespace) -> AppConfig:
     )
 
 
-def _resolve_upload_args(args: argparse.Namespace) -> tuple[Path, str]:
+def _resolve_upload_args(args: argparse.Namespace, profile: SourceForgeProfile) -> tuple[Path, str]:
     if args.remote_dir is not None:
         if args.file is None:
             return Path(args.path), args.remote_dir
         return Path(args.file), args.remote_dir
-    if args.file is None:
-        raise SourceForgeError("upload requires REMOTE_DIR and FILE, or FILE with --remote-dir.")
-    return Path(args.file), args.path
+    if args.file is not None:
+        return Path(args.file), args.path
+    candidate = Path(args.path)
+    if candidate.exists():
+        remote_dir = profile.last_remote_dir or ""
+        return candidate, remote_dir
+    raise SourceForgeError("upload requires REMOTE_DIR and FILE, or FILE with --remote-dir.")
 
 
 def _resolve_rename_target(args: argparse.Namespace) -> str:
@@ -301,9 +306,14 @@ def main(argv: list[str] | None = None) -> int:
         client = SourceForgeClient(config)
 
         if args.command == "upload":
-            local_file, remote_dir = _resolve_upload_args(args)
+            local_file, remote_dir = _resolve_upload_args(args, resolved_profile)
             result = client.upload_file(local_file, remote_dir, overwrite=args.overwrite)
             print(result.url)
+            if remote_dir:
+                stored = load_profile()
+                if stored:
+                    stored.last_remote_dir = remote_dir
+                    save_profile(stored)
             if telegram_config is not None:
                 try:
                     send_telegram_message(
