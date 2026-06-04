@@ -42,7 +42,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Upload a file to supported services.",
     )
-    parser.add_argument("file", help="Path to the file to upload.")
+    parser.add_argument("file", nargs="?", default=None, help="Path to the file to upload.")
     parser.add_argument(
         "--config",
         help="Path to config file (default: ~/.config/uploader/config)",
@@ -172,12 +172,26 @@ def main(argv: list[str] | None = None) -> int:
             return sourceforge_main(args_list[1:])
 
         args = parse_args(args_list)
+        config_path = get_config_path(args.config)
+
+        if args.setup:
+            if not sys.stdin.isatty():
+                console.print("[red]Setup requires an interactive terminal.[/red]")
+                return 1
+            console.print("[yellow]Running optional setup...[/yellow]\n")
+            run_setup(config_path)
+            if args.file is None:
+                return 0
+
+        if args.file is None:
+            console.print("[red]the following arguments are required: file[/red]")
+            return 2
+
         file_path = Path(args.file).expanduser().resolve()
         if not file_path.exists() or not file_path.is_file():
             console.print(f"[red]File not found:[/red] {file_path}")
             return 2
 
-        config_path = get_config_path(args.config)
         config = AppConfig.from_sources(
             config_path=config_path,
             pixeldrain_key=args.pixeldrain_key,
@@ -186,21 +200,6 @@ def main(argv: list[str] | None = None) -> int:
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
         )
-
-        if args.setup:
-            if not sys.stdin.isatty():
-                console.print("[red]Setup requires an interactive terminal.[/red]")
-                return 1
-            console.print("[yellow]Running optional setup...[/yellow]\n")
-            run_setup(config_path)
-            config = AppConfig.from_sources(
-                config_path=config_path,
-                pixeldrain_key=args.pixeldrain_key,
-                gofile_key=args.gofile_key,
-                vikingfile_user=args.vikingfile_user,
-                telegram_bot_token=args.telegram_bot_token,
-                telegram_chat_id=args.telegram_chat_id,
-            )
 
         services = build_default_services(config)
         if args.direct:
