@@ -67,7 +67,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-d",
         "--direct",
         action="store_true",
-        help="Upload to sendit.sh, falling back to temp.sh.",
+        help="Upload to sendit.sh.",
     )
     parser.add_argument(
         "--no-telegram", action="store_true", help="Skip Telegram notification."

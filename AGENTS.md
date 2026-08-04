@@ -6,11 +6,11 @@
 - `AppConfig.from_sources` resolves values in this order: CLI flags, YAML config (`~/.config/uploader/config` or custom path via `--config`/`UPLOADER_CONFIG`), real environment variables, `.env` in the current working directory.
 - `.env.example` is the template; lowercase aliases like `pixeldrain` and `telegram_chat_id` still work for backward compatibility.
 - The CLI uploads to Pixeldrain, GoFile, and Vikingfile in parallel; `--single` is interactive and requires a TTY.
-- New CLI flags: `--setup` (interactive YAML config creation), `--direct` (sendit.sh/temp.sh fallback upload), `--config` (custom config path).
+- New CLI flags: `--setup` (interactive YAML config creation), `--direct` (sendit.sh upload), `--config` (custom config path).
 - Telegram notifications use legacy Markdown formatting and include file metadata (SHA256 hash first 16 chars, size, upload date) with download links.
 - Telegram config is required unless `--no-telegram` is set.
 - `upload_gofile` is a two-step flow: account lookup, create a public folder, then upload the file and return the folder URL.
-- `upload_direct` tries sendit.sh first, falls back to temp.sh if it fails.
+- `upload_direct` uploads via sendit.sh.
 - All upload functions calculate SHA256 hash and file size, included in UploadResult and Telegram notifications.
 - `retry_upload` makes up to 3 attempts with 1s then 2s backoff for `requests.RequestException` and `RuntimeError`.
 - Tests are stdlib `unittest` and mock `requests`; keep new unit tests network-free.

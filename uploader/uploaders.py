@@ -16,7 +16,6 @@ from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 PIXELDRAIN_API_BASE = "https://pixeldrain.com/api"
 GOFILE_API_BASE = "https://api.gofile.io"
 VIKINGFILE_API_BASE = "https://vikingfile.com/api"
-TEMPSH_API_BASE = "https://temp.sh/upload"
 SENDITSH_API_BASE = "https://sendit.sh"
 CHUNK_SIZE = 1024 * 256
 
@@ -343,7 +342,6 @@ def upload_vikingfile(
 def _upload_direct_with_provider(
     file_path: Path,
     endpoint: str,
-    provider_name: str,
     callback: ProgressCallback,
     cancelled: Callable[[], bool] | None = None,
 ) -> str:
@@ -375,19 +373,12 @@ def _upload_direct_with_provider(
 
     response.raise_for_status()
     response_text = response.text.strip()
-    if provider_name == "sendit.sh":
-        match = re.search(r"https://sendit\.sh/\S+", response_text)
-        if not match:
-            raise RuntimeError(
-                f"sendit.sh upload response did not contain a valid download URL: {response_text}"
-            )
-        return match.group(0)
-
-    if not response_text or not response_text.startswith("https://temp.sh/"):
+    match = re.search(r"https://sendit\.sh/\S+", response_text)
+    if not match:
         raise RuntimeError(
-            f"temp.sh upload response did not contain a valid download URL: {response_text}"
+            f"sendit.sh upload response did not contain a valid download URL: {response_text}"
         )
-    return response_text
+    return match.group(0)
 
 
 def upload_direct(
@@ -403,35 +394,21 @@ def upload_direct(
         download_url = _upload_direct_with_provider(
             file_path,
             SENDITSH_API_BASE,
-            "sendit.sh",
             callback,
             cancelled=is_cancelled,
         )
-        provider = "sendit.sh"
     except UploadCancelledError:
         raise
     except Exception as sendit_error:
-        try:
-            download_url = _upload_direct_with_provider(
-                file_path,
-                TEMPSH_API_BASE,
-                "temp.sh",
-                callback,
-                cancelled=is_cancelled,
-            )
-            provider = "temp.sh"
-        except UploadCancelledError:
-            raise
-        except Exception as temp_error:
-            raise RuntimeError(
-                f"direct upload failed via sendit.sh ({sendit_error}) and temp.sh ({temp_error})"
-            ) from temp_error
+        raise RuntimeError(
+            f"direct upload failed via sendit.sh ({sendit_error})"
+        ) from sendit_error
 
     return UploadResult(
         service="Direct",
         success=True,
         url=download_url,
-        payload={"provider": provider, "url": download_url},
+        payload={"provider": "sendit.sh", "url": download_url},
         file_hash=file_hash,
         file_size=file_size,
         upload_date=datetime.now().isoformat(),

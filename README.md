@@ -46,7 +46,7 @@ Upload to a single service:
 uploader -s <file>
 ```
 
-Direct-link upload (sendit.sh with temp.sh fallback):
+Direct-link upload (sendit.sh):
 
 ```bash
 uploader --direct <file>
@@ -122,10 +122,9 @@ uploader --setup
 
 ## Direct Downloader
 
-Tries sendit.sh first, falls back to temp.sh if it fails.
+Uploads via sendit.sh.
 
 - sendit.sh links work in browser, curl, wget
-- temp.sh files expire after 3 days, max 4GB
 
 ## SourceForge FRS
 
